@@ -12,13 +12,15 @@ class Hiera
 
         class Gpg < Encryptor
           # Default recipient filename
-          RCP_FILE = 'hiera-eyaml-gpg.recipient'
+          RCP_FILE = 'hiera-eyaml-gpg.recipients'
+          # Valid sources
+          SOURCES = [:file, :eyaml]
           self.tag = "GPG"
 
           self.options = {
             :gnupghome => { :desc => "Location of your GNUPGHOME directory",
                             :type => :string,
-                            :default => ENV['GPGHOME'] || ENV['HOME'] + '/.gnupg', }
+                            :default => ENV['GPGHOME'] || File.join(ENV['HOME'], '.gnupg') },
             :always_trust => { :desc => "Assume that used keys are fully trusted",
                                :type => :boolean,
                                :default => false },
@@ -43,7 +45,6 @@ class Hiera
           end
 
           def self.find_recipients
-            recipients = nil
 
             unless self.option(:recipients).nil?
               debug 'Using --recipients option'
@@ -55,16 +56,21 @@ class Hiera
             # Try to load recipients from the recipients-file option or a found file
             if recipients.nil?
               debug 'Searching for any hiera-eyaml-gpg.recipients files in the current path'
+              debug "All Eyaml options: #{Eyaml::Options.debug.inspect}"
               debug "Inspecting Eyaml source: #{Eyaml::Options[:source].inspect}"
-              filename = Eyaml::Options[
-                  Eyaml::Options[:source]
-              ]
 
-              filename = Pathname.new(filename).realpath.dirname.descend do |dp|
+              source = Eyaml::Options[:source]
+              filename = SOURCES.include?(source) ? Eyaml::Options[source] : nil
+
+              # Descend from wd and find our default recipients file
+              filename = Pathname.new(Dir.pwd).realpath.descend do |dp|
                 dp = dp.join(RCP_FILE)
+                debug "Checking if #{dp} exists"
                 break dp if File.exist? dp
               end.to_s
-              recipients = File.readlines.map(&:chomp).map(&:strip)
+              debug "Filename: #{filename.inspect}"
+              return [] if filename.nil?
+              recipients = File.readlines(filename).map(&:chomp).map(&:strip)
             end
 
             debug "Recipients: #{recipients.inspect}"
@@ -73,7 +79,7 @@ class Hiera
           end
 
           def self.gnupghome
-            ENV['GNUPGHOME'] = self.option :gnupghome)
+            ENV['GNUPGHOME'] ||= self.option :gnupghome
             debug "GNUPGHOME redefined to #{ENV['GNUPGHOME']}"
           end
 
