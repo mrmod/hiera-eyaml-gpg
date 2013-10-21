@@ -11,13 +11,14 @@ class Hiera
       module Encryptors
 
         class Gpg < Encryptor
-
+          # Default recipient filename
+          RCP_FILE = 'hiera-eyaml-gpg.recipient'
           self.tag = "GPG"
 
           self.options = {
             :gnupghome => { :desc => "Location of your GNUPGHOME directory",
                             :type => :string,
-                            :default => "#{ENV[["HOME", "HOMEPATH"].detect { |h| ENV[h] != nil }]}/.gnupg" },
+                            :default => ENV['GPGHOME'] || ENV['HOME'] + '/.gnupg', }
             :always_trust => { :desc => "Assume that used keys are fully trusted",
                                :type => :boolean,
                                :default => false },
@@ -42,53 +43,42 @@ class Hiera
           end
 
           def self.find_recipients
-            recipient_option = self.option :recipients
-            recipients = if !recipient_option.nil?
-              debug("Using --recipients option")
-              recipient_option.split(",")
+            recipients = nil
+
+            unless self.option(:recipients).nil?
+              debug 'Using --recipients option'
+              recipients = recipient_option.split ','
             else
-              recipient_file_option = self.option :recipients_file
-              recipient_file = if !recipient_file_option.nil?
-                debug("Using --recipients-file option")
-                Pathname.new(recipient_file_option)
-              else
-                debug("Searching for any hiera-eyaml-gpg.recipents files in path")
-                # if we are editing a file, look for a hiera-eyaml-gpg.recipients file
-                filename = case Eyaml::Options[:source]
-                when :file
-                  Eyaml::Options[:file]
-                when :eyaml
-                  Eyaml::Options[:eyaml]
-                else
-                  nil
-                end
-
-                if filename.nil?
-                  nil
-                else
-                  path = Pathname.new(filename).realpath.dirname
-                  selected_file = nil
-                  path.descend{|path| path
-                    potential_file = path.join('hiera-eyaml-gpg.recipients')
-                    selected_file = potential_file if potential_file.exist? 
-                  }
-                  debug("Using file at #{selected_file}")
-                  selected_file
-                end
-              end
-
-              unless recipient_file.nil?
-                recipient_file.readlines.map{ |line| line.strip } 
-              else
-                []
-              end
+              recipients = self.option :recipients_file
             end
+
+            # Try to load recipients from the recipients-file option or a found file
+            if recipients.nil?
+              debug 'Searching for any hiera-eyaml-gpg.recipients files in the current path'
+              debug "Inspecting Eyaml source: #{Eyaml::Options[:source].inspect}"
+              filename = Eyaml::Options[
+                  Eyaml::Options[:source]
+              ]
+
+              filename = Pathname.new(filename).realpath.dirname.descend do |dp|
+                dp = dp.join(RCP_FILE)
+                break dp if File.exist? dp
+              end.to_s
+              recipients = File.readlines.map(&:chomp).map(&:strip)
+            end
+
+            debug "Recipients: #{recipients.inspect}"
+
+            recipients
+          end
+
+          def self.gnupghome
+            ENV['GNUPGHOME'] = self.option :gnupghome)
+            debug "GNUPGHOME redefined to #{ENV['GNUPGHOME']}"
           end
 
           def self.encrypt plaintext
-            ENV["GNUPGHOME"] = self.option :gnupghome
-            debug("GNUPGHOME is #{ENV['GNUPGHOME']}")
-
+            self.gnupghome
             ctx = GPGME::Ctx.new
 
             recipients = self.find_recipients
@@ -119,16 +109,12 @@ class Hiera
           end
 
           def self.decrypt ciphertext
-            ENV["GNUPGHOME"] = self.option :gnupghome
-            debug("GNUPGHOME is #{ENV['GNUPGHOME']}")
+            self.gnupghome
 
-            ctx = if hiera?
-              GPGME::Ctx.new
-            else
-              GPGME::Ctx.new(:passphrase_callback => method(:passfunc))
-            end
+            ctx = hiera? ? GPGME::Ctx.new : GPGME::Ctx.new(:passphrase_callback => method(:passfunc))
 
-            if !ctx.keys.empty?
+
+            unless ctx.keys.empty?
               raw = GPGME::Data.new(ciphertext)
               txt = GPGME::Data.new
 
