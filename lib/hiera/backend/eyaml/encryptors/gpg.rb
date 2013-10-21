@@ -48,7 +48,7 @@ class Hiera
 
             unless self.option(:recipients).nil?
               debug 'Using --recipients option'
-              recipients = recipient_option.split ','
+              recipients = self.option(:recipients).split ','
             else
               recipients = self.option :recipients_file
             end
@@ -118,7 +118,6 @@ class Hiera
             self.gnupghome
 
             ctx = hiera? ? GPGME::Ctx.new : GPGME::Ctx.new(:passphrase_callback => method(:passfunc))
-
 
             unless ctx.keys.empty?
               raw = GPGME::Data.new(ciphertext)
